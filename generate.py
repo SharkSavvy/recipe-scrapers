@@ -1,62 +1,86 @@
 # generate.py generates a new recipe scraper.
 import json
 import os
+import logging
 from recipe_scrapers import scrape_me
-from apify_client import ApifyClient # Import ApifyClient
+from apify_client import ApifyClient
 
-# Remove get_apify_input as we'll use the client
+# Setup logging
+logging.basicConfig(level=logging.DEBUG)
+logger = logging.getLogger(__name__)
 
-def write_apify_output(data):
-    output_path = os.environ.get('APIFY_OUTPUT_PATH', '/apify/output.json')
-    os.makedirs(os.path.dirname(output_path), exist_ok=True)
-    with open(output_path, 'w') as f:
-        json.dump(data, f, indent=2)
-    print(f"DEBUG: Wrote output to {output_path}")
-    # Print the contents of the output file for debugging
-    with open(output_path, 'r') as f:
-        print("DEBUG: Output file contents:", f.read())
+# Validate environment variables
+required_env_vars = [
+    'APIFY_TOKEN',
+    'APIFY_ACTOR_ID',
+    'APIFY_DEFAULT_KEY_VALUE_STORE_ID'
+]
 
-async def main(): # Make main async for ApifyClient
-    # Initialize the ApifyClient
-    client = ApifyClient(os.environ.get('APIFY_TOKEN')) # Assumes APIFY_TOKEN env var is set
+def validate_env_vars():
+    missing_vars = [var for var in required_env_vars if not os.environ.get(var)]
+    if missing_vars:
+        raise EnvironmentError(f"Missing required environment variables: {', '.join(missing_vars)}")
 
-    # Get the Actor input
-    actor_input = await client.actor(os.environ.get('APIFY_ACTOR_ID')).get_input() or {}
-    print("DEBUG: Apify input received via client:", actor_input)
-
-    url = actor_input.get("url")
-    if not url:
-        result = {"error": "No URL provided in input", "apify_input": actor_input}
-        write_apify_output(result)
-        print(result)
-        return
-
+async def main():
     try:
-        scraper = scrape_me(url)
-        recipe_data = {
-            "title": scraper.title(),
-            "ingredients": scraper.ingredients(),
-            "instructions": scraper.instructions(),
-            "total_time": scraper.total_time(),
-            "yields": scraper.yields(),
-            "image": scraper.image(),
-            "host": scraper.host(),
-            "author": scraper.author(),
-            "description": scraper.description(),
-            "nutrients": scraper.nutrients() if hasattr(scraper, "nutrients") else None,
-            "url": url
-        }
-        # Use client to set output instead of writing file directly
-        await client.key_value_store(os.environ.get('APIFY_DEFAULT_KEY_VALUE_STORE_ID')).set_record('OUTPUT', recipe_data)
-        print("DEBUG: Set output via client:", recipe_data)
+        # Validate environment variables first
+        validate_env_vars()
+        
+        # Initialize the ApifyClient with error handling
+        client = ApifyClient(os.environ['APIFY_TOKEN'])
+        
+        # Test client connection
+        try:
+            await client.actor(os.environ['APIFY_ACTOR_ID']).get()
+            logger.debug("Successfully connected to Apify")
+        except Exception as e:
+            logger.error(f"Failed to connect to Apify: {str(e)}")
+            raise
+
+        # Get the Actor input
+        actor_input = await client.actor(os.environ['APIFY_ACTOR_ID']).get_input() or {}
+        logger.debug(f"Apify input received via client: {actor_input}")
+
+        url = actor_input.get("url")
+        if not url:
+            result = {"error": "No URL provided in input", "apify_input": actor_input}
+            await client.key_value_store(os.environ['APIFY_DEFAULT_KEY_VALUE_STORE_ID']).set_record('OUTPUT', result)
+            logger.error("No URL provided in input")
+            return
+
+        try:
+            scraper = scrape_me(url)
+            recipe_data = {
+                "title": scraper.title(),
+                "ingredients": scraper.ingredients(),
+                "instructions": scraper.instructions(),
+                "total_time": scraper.total_time(),
+                "yields": scraper.yields(),
+                "image": scraper.image(),
+                "host": scraper.host(),
+                "author": scraper.author(),
+                "description": scraper.description(),
+                "nutrients": scraper.nutrients() if hasattr(scraper, "nutrients") else None,
+                "url": url
+            }
+            try:
+                await client.key_value_store(os.environ['APIFY_DEFAULT_KEY_VALUE_STORE_ID']).set_record('OUTPUT', recipe_data)
+                logger.debug(f"Successfully saved recipe data for URL: {url}")
+            except Exception as e:
+                logger.error(f"Failed to save output: {str(e)}")
+                raise
+        except Exception as e:
+            result = {"error": str(e)}
+            await client.key_value_store(os.environ['APIFY_DEFAULT_KEY_VALUE_STORE_ID']).set_record('OUTPUT', result)
+            logger.error(f"Error during scraping: {str(e)}")
+            raise
+
     except Exception as e:
-        result = {"error": str(e)}
-        # Use client to set output
-        await client.key_value_store(os.environ.get('APIFY_DEFAULT_KEY_VALUE_STORE_ID')).set_record('OUTPUT', result)
-        print("DEBUG: Set error output via client:", result)
+        error_data = {"error": str(e), "error_type": type(e).__name__}
+        logger.error(f"Fatal error: {str(e)}", exc_info=True)
+        await client.key_value_store(os.environ['APIFY_DEFAULT_KEY_VALUE_STORE_ID']).set_record('OUTPUT', error_data)
+        raise
 
 if __name__ == "__main__":
-    # Run the async main function
     import asyncio
     asyncio.run(main())
-
