@@ -2,26 +2,31 @@
 import json
 import os
 from recipe_scrapers import scrape_me
+from apify_client import ApifyClient # Import ApifyClient
 
-def get_apify_input():
-    input_path = os.environ.get('APIFY_INPUT_PATH', '/apify/input.json')
-    if os.path.exists(input_path):
-        with open(input_path, 'r') as f:
-            return json.load(f)
-    return {}
+# Remove get_apify_input as we'll use the client
 
 def write_apify_output(data):
     output_path = os.environ.get('APIFY_OUTPUT_PATH', '/apify/output.json')
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
     with open(output_path, 'w') as f:
         json.dump(data, f, indent=2)
+    print(f"DEBUG: Wrote output to {output_path}")
+    # Print the contents of the output file for debugging
+    with open(output_path, 'r') as f:
+        print("DEBUG: Output file contents:", f.read())
 
-def main():
-    apify_input = get_apify_input()
-    print("DEBUG: Apify input received:", apify_input)
-    url = apify_input.get("url")
+async def main(): # Make main async for ApifyClient
+    # Initialize the ApifyClient
+    client = ApifyClient(os.environ.get('APIFY_TOKEN')) # Assumes APIFY_TOKEN env var is set
+
+    # Get the Actor input
+    actor_input = await client.actor(os.environ.get('APIFY_ACTOR_ID')).get_input() or {}
+    print("DEBUG: Apify input received via client:", actor_input)
+
+    url = actor_input.get("url")
     if not url:
-        result = {"error": "No URL provided in input", "apify_input": apify_input}
+        result = {"error": "No URL provided in input", "apify_input": actor_input}
         write_apify_output(result)
         print(result)
         return
@@ -41,12 +46,17 @@ def main():
             "nutrients": scraper.nutrients() if hasattr(scraper, "nutrients") else None,
             "url": url
         }
-        write_apify_output(recipe_data)
-        print(recipe_data)
+        # Use client to set output instead of writing file directly
+        await client.key_value_store(os.environ.get('APIFY_DEFAULT_KEY_VALUE_STORE_ID')).set_record('OUTPUT', recipe_data)
+        print("DEBUG: Set output via client:", recipe_data)
     except Exception as e:
         result = {"error": str(e)}
-        write_apify_output(result)
-        print(result)
+        # Use client to set output
+        await client.key_value_store(os.environ.get('APIFY_DEFAULT_KEY_VALUE_STORE_ID')).set_record('OUTPUT', result)
+        print("DEBUG: Set error output via client:", result)
 
 if __name__ == "__main__":
-    main()
+    # Run the async main function
+    import asyncio
+    asyncio.run(main())
+
