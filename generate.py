@@ -1,17 +1,7 @@
 # generate.py generates a new recipe scraper.
-import ast
 import json
 import os
-import sys
-from pathlib import Path
-
-import requests
-
-from recipe_scrapers._abstract import HEADERS
-from recipe_scrapers._utils import get_host_name
-
-template_class_name = "Template"
-template_host_name = "example.com"
+from recipe_scrapers import scrape_me
 
 def get_apify_input():
     input_path = os.environ.get('APIFY_INPUT_PATH', '/apify/input.json')
@@ -26,225 +16,37 @@ def write_apify_output(data):
     with open(output_path, 'w') as f:
         json.dump(data, f, indent=2)
 
-def generate_scraper(class_name, host_name):
-    template_path = Path("templates/scraper.py")
-    with template_path.open() as source:
-        code = source.read()
-        program = ast.parse(code)
-
-        state = GenerateScraperState(class_name, host_name, code)
-        for node in ast.walk(program):
-            if not state.step(node):
-                break
-
-        output = Path(f"recipe_scrapers/{class_name.lower()}.py")
-        output.write_text(state.result())
-
-def generate_scraper_test(class_name, host_name):
-    test_data_dir = Path(f"tests/test_data/{host_name}")
-    test_data_dir.mkdir(parents=True, exist_ok=True)
-
-    testjson = {
-        "host": host_name,
-        "canonical_url": "",
-        "site_name": "",
-        "author": "",
-        "language": "",
-        "title": "",
-        "ingredients": "",
-        "instructions_list": "",
-        "total_time": "",
-        "yields": "",
-        "image": "",
-        "description": "",
-    }
-
-    output = test_data_dir / f"{class_name.lower()}.json"
-    output.write_text(json.dumps(testjson, indent=2))
-
-def init_scraper(class_name):
-    init_file = Path("recipe_scrapers/__init__.py")
-    with init_file.open("r+") as source:
-        code = source.read()
-        program = ast.parse(code)
-
-        state = InitScraperState(class_name, code)
-        for node in ast.walk(program):
-            if not state.step(node):
-                break
-
-        source.seek(0)
-        source.write(state.result())
-        source.truncate()
-
-def generate_test_data(class_name, host_name, content):
-    output = Path(f"tests/test_data/{host_name}/{class_name.lower()}.testhtml")
-    with output.open("w", encoding="utf-8") as target:
-        target.write(content.decode(encoding="utf-8"))
-
-class ScraperState:
-    def __init__(self, code):
-        self.code = code
-        self.line_offsets = get_line_offsets(code)
-        self.replacer = Replacer(code)
-
-    def result(self):
-        return self.replacer.result()
-
-    def _offset(self, node):
-        return self.line_offsets[node.lineno - 1] + node.col_offset
-
-    def _replace(self, replacement_text, start, length):
-        self.replacer.replace(replacement_text, start, length)
-
-class GenerateScraperState(ScraperState):
-    def __init__(self, class_name, host_name, code):
-        super().__init__(code)
-        self.class_name = class_name
-        self.host_name = host_name
-
-    def step(self, node):
-        if isinstance(node, ast.ClassDef) and node.name == template_class_name:
-            offset = self._offset(node)
-            segment_end = self.code.index(template_class_name, offset)
-            self._replace(self.class_name, segment_end, len(template_class_name))
-
-        if isinstance(node, ast.Constant) and node.value == template_host_name:
-            offset = self._offset(node)
-            segment_end = self.code.index(template_host_name, offset)
-            self._replace(self.host_name, segment_end, len(template_host_name))
-
-        return True
-
-class InitScraperState(ScraperState):
-    def __init__(self, class_name, code):
-        super().__init__(code)
-        self.class_name = class_name
-        self.module_name = class_name.lower()
-        self.state = "import"
-        self.last_node = None
-
-    def step(self, node):
-        if self.state == "import":
-            return self._import(node)
-        elif self.state == "init":
-            return self._init(node)
-        else:
-            return False
-
-    def _import(self, node):
-        if isinstance(node, ast.Module) or isinstance(node, ast.Import):
-            return True
-
-        if isinstance(node, ast.ImportFrom) and node.level > 0:
-            if node.module > self.module_name:
-                offset = self._offset(node)
-                import_statement = (
-                    f"\nfrom .{self.module_name} import {self.class_name}"
-                )
-                self._replace(import_statement, offset, 0)
-                self.state = "init"
-            self.last_node = node
-        elif isinstance(self.last_node, ast.ImportFrom):
-            offset = (
-                self.line_offsets[self.last_node.lineno - 1]
-                + self.last_node.end_col_offset
-            )
-            segment_end = self.code.index("\n", offset)
-            import_statement = f"\nfrom .{self.module_name} import {self.class_name}"
-            self._replace(import_statement, segment_end, 0)
-            self.state = "init"
-            return self._init(node)
-
-        return True
-
-    def _init(self, node):
-        if isinstance(node, ast.Assign):
-            for target in node.targets:
-                if (
-                    hasattr(target, "id")
-                    and target.id == "SCRAPERS"
-                    and isinstance(node.value, ast.Dict)
-                ):
-                    for key in node.value.keys:
-                        if (
-                            isinstance(key, ast.Call)
-                            and isinstance(key.func, ast.Attribute)
-                            and isinstance(key.func.value, ast.Name)
-                        ):
-                            if key.func.value.id > self.class_name:
-                                offset = self._offset(key)
-                                init_statement = f" {self.class_name}.host(): {self.class_name},\n   "
-                                self._replace(init_statement, offset, 0)
-                                return False
-                            self.last_node = key
-
-            if isinstance(self.last_node, ast.Call):
-                offset = (
-                    self.line_offsets[self.last_node.lineno - 1]
-                    + self.last_node.end_col_offset
-                )
-                segment_end = self.code.index("\n", offset)
-                init_statement = f"\n    {self.class_name}.host(): {self.class_name},"
-                self._replace(init_statement, segment_end, 0)
-                return False
-
-        return True
-
-class Replacer:
-    def __init__(self, code):
-        self.code = code
-        self.delta = 0
-        self.replacements = []
-
-    def replace(self, replacement_text, start, length):
-        self.replacements.append((replacement_text, start, length))
-
-    def result(self):
-        code = self.code
-        for replacement_text, start, length in self.replacements:
-            start = start + self.delta
-            end = start + length
-            code = code[:start] + replacement_text + code[end:]
-            self.delta += len(replacement_text) - length
-
-        return code
-
-def get_line_offsets(code):
-    offset = 0
-    indices = [0]
-    try:
-        while True:
-            index = code.index("\n", offset)
-            indices.append(index)
-            offset = index + 1
-    except ValueError:
-        return indices
-
 def main():
-    # Read input from Apify input.json
     apify_input = get_apify_input()
-    url = apify_input.get("url", "https://www.example.com/recipe/12345/example-recipe/")
-    host_name = get_host_name(url)
-    # Use the host name to generate a class name (capitalize and remove dots)
-    class_name = host_name.title().replace('.', '')
+    url = apify_input.get("url")
+    if not url:
+        result = {"error": "No URL provided in input"}
+        write_apify_output(result)
+        print(result)
+        return
 
-    testhtml = requests.get(url, headers=HEADERS).content
-
-    generate_scraper(class_name, host_name)
-    generate_scraper_test(class_name, host_name)
-    generate_test_data(class_name, host_name, testhtml)
-    init_scraper(class_name)
-
-    # Output a result for Apify
-    result = {
-        "message": f"Successfully generated scraper for {class_name} ({host_name})",
-        "class_name": class_name,
-        "url": url,
-        "host_name": host_name
-    }
-    write_apify_output(result)
-    print(result)
+    try:
+        scraper = scrape_me(url)
+        recipe_data = {
+            "title": scraper.title(),
+            "ingredients": scraper.ingredients(),
+            "instructions": scraper.instructions(),
+            "total_time": scraper.total_time(),
+            "yields": scraper.yields(),
+            "image": scraper.image(),
+            "host": scraper.host(),
+            "author": scraper.author(),
+            "description": scraper.description(),
+            "nutrients": scraper.nutrients() if hasattr(scraper, "nutrients") else None,
+            "url": url
+        }
+        write_apify_output(recipe_data)
+        print(recipe_data)
+    except Exception as e:
+        result = {"error": str(e)}
+        write_apify_output(result)
+        print(result)
 
 if __name__ == "__main__":
     main()
+
