@@ -22,6 +22,7 @@ def get_apify_input():
 
 def write_apify_output(data):
     output_path = os.environ.get('APIFY_OUTPUT_PATH', '/apify/output.json')
+    os.makedirs(os.path.dirname(output_path), exist_ok=True)
     with open(output_path, 'w') as f:
         json.dump(data, f, indent=2)
 
