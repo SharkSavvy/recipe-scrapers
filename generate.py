@@ -224,9 +224,11 @@ def get_line_offsets(code):
 def main():
     # Read input from Apify input.json
     apify_input = get_apify_input()
-    class_name = apify_input.get("ScraperClassName", "ExampleClassName")
     url = apify_input.get("url", "https://www.example.com/recipe/12345/example-recipe/")
     host_name = get_host_name(url)
+    # Use the host name to generate a class name (capitalize and remove dots)
+    class_name = host_name.title().replace('.', '')
+
     testhtml = requests.get(url, headers=HEADERS).content
 
     generate_scraper(class_name, host_name)
