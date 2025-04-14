@@ -1,6 +1,7 @@
 # generate.py generates a new recipe scraper.
 import ast
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -12,6 +13,17 @@ from recipe_scrapers._utils import get_host_name
 template_class_name = "Template"
 template_host_name = "example.com"
 
+def get_apify_input():
+    input_path = os.environ.get('APIFY_INPUT_PATH', '/apify/input.json')
+    if os.path.exists(input_path):
+        with open(input_path, 'r') as f:
+            return json.load(f)
+    return {}
+
+def write_apify_output(data):
+    output_path = os.environ.get('APIFY_OUTPUT_PATH', '/apify/output.json')
+    with open(output_path, 'w') as f:
+        json.dump(data, f, indent=2)
 
 def generate_scraper(class_name, host_name):
     template_path = Path("templates/scraper.py")
@@ -26,7 +38,6 @@ def generate_scraper(class_name, host_name):
 
         output = Path(f"recipe_scrapers/{class_name.lower()}.py")
         output.write_text(state.result())
-
 
 def generate_scraper_test(class_name, host_name):
     test_data_dir = Path(f"tests/test_data/{host_name}")
@@ -50,7 +61,6 @@ def generate_scraper_test(class_name, host_name):
     output = test_data_dir / f"{class_name.lower()}.json"
     output.write_text(json.dumps(testjson, indent=2))
 
-
 def init_scraper(class_name):
     init_file = Path("recipe_scrapers/__init__.py")
     with init_file.open("r+") as source:
@@ -66,12 +76,10 @@ def init_scraper(class_name):
         source.write(state.result())
         source.truncate()
 
-
 def generate_test_data(class_name, host_name, content):
     output = Path(f"tests/test_data/{host_name}/{class_name.lower()}.testhtml")
     with output.open("w", encoding="utf-8") as target:
         target.write(content.decode(encoding="utf-8"))
-
 
 class ScraperState:
     def __init__(self, code):
@@ -87,7 +95,6 @@ class ScraperState:
 
     def _replace(self, replacement_text, start, length):
         self.replacer.replace(replacement_text, start, length)
-
 
 class GenerateScraperState(ScraperState):
     def __init__(self, class_name, host_name, code):
@@ -107,7 +114,6 @@ class GenerateScraperState(ScraperState):
             self._replace(self.host_name, segment_end, len(template_host_name))
 
         return True
-
 
 class InitScraperState(ScraperState):
     def __init__(self, class_name, code):
@@ -184,7 +190,6 @@ class InitScraperState(ScraperState):
 
         return True
 
-
 class Replacer:
     def __init__(self, code):
         self.code = code
@@ -204,7 +209,6 @@ class Replacer:
 
         return code
 
-
 def get_line_offsets(code):
     offset = 0
     indices = [0]
@@ -216,17 +220,11 @@ def get_line_offsets(code):
     except ValueError:
         return indices
 
-
 def main():
-    if len(sys.argv) != 3:
-        print("Usage: python generate.py <ScraperClassName> <url>")
-        print(
-            "Example: python generate.py ExampleClassName https://www.example.com/recipe/12345/example-recipe/"
-        )
-        sys.exit(1)
-
-    class_name = sys.argv[1]
-    url = sys.argv[2]
+    # Read input from Apify input.json
+    apify_input = get_apify_input()
+    class_name = apify_input.get("ScraperClassName", "ExampleClassName")
+    url = apify_input.get("url", "https://www.example.com/recipe/12345/example-recipe/")
     host_name = get_host_name(url)
     testhtml = requests.get(url, headers=HEADERS).content
 
@@ -235,8 +233,15 @@ def main():
     generate_test_data(class_name, host_name, testhtml)
     init_scraper(class_name)
 
-    print(f"Successfully generated scraper for {class_name} ({host_name})")
-
+    # Output a result for Apify
+    result = {
+        "message": f"Successfully generated scraper for {class_name} ({host_name})",
+        "class_name": class_name,
+        "url": url,
+        "host_name": host_name
+    }
+    write_apify_output(result)
+    print(result)
 
 if __name__ == "__main__":
     main()
