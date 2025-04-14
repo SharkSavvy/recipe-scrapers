@@ -1,6 +1,7 @@
 # generate.py generates a new recipe scraper.
 import json
 import os
+import sys
 from recipe_scrapers import scrape_me
 
 def write_apify_output(data):
@@ -13,19 +14,36 @@ def write_apify_output(data):
         print("DEBUG: Output file contents:", f.read())
 
 def main():
+    # Try to get input from multiple sources
     actor_input = {}
-    input_path = os.environ.get('APIFY_INPUT_PATH', '/apify/input.json')
-    if os.path.exists(input_path):
-        with open(input_path, 'r') as f:
-            actor_input = json.load(f)
-    print("DEBUG: Apify input:", actor_input)
-
-    url = actor_input.get("url")
     
+    # 1. Try reading from stdin first (direct API input)
+    if not sys.stdin.isatty():
+        try:
+            stdin_data = sys.stdin.read()
+            print("DEBUG: Received stdin data:", stdin_data)
+            actor_input = json.loads(stdin_data)
+        except Exception as e:
+            print("DEBUG: Failed to parse stdin:", e)
+    
+    # 2. Fall back to input file if stdin was empty
+    if not actor_input:
+        input_path = os.environ.get('APIFY_INPUT_PATH', '/apify/input.json')
+        if os.path.exists(input_path):
+            with open(input_path, 'r') as f:
+                actor_input = json.load(f)
+    
+    print("DEBUG: Final Apify input:", actor_input)
+
+    # Extract URL and validate
+    url = actor_input.get("url")
     if not url:
         result = {"error": "No URL provided in input"}
         write_apify_output(result)
+        print("DEBUG: No URL found in input")
         return
+
+    print("DEBUG: Processing URL:", url)
 
     try:
         scraper = scrape_me(url)
@@ -38,8 +56,11 @@ def main():
             "url": url
         }
         write_apify_output(recipe_data)
+        print("DEBUG: Successfully scraped recipe")
     except Exception as e:
-        write_apify_output({"error": str(e)})
+        error_msg = {"error": str(e)}
+        write_apify_output(error_msg)
+        print("DEBUG: Scraping failed:", str(e))
 
 if __name__ == "__main__":
     main()
