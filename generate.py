@@ -18,9 +18,10 @@ def write_apify_output(data):
 
 def main():
     apify_input = get_apify_input()
+    print("DEBUG: Apify input received:", apify_input)
     url = apify_input.get("url")
     if not url:
-        result = {"error": "No URL provided in input"}
+        result = {"error": "No URL provided in input", "apify_input": apify_input}
         write_apify_output(result)
         print(result)
         return
@@ -49,4 +50,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
