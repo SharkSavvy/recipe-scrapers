@@ -1,8 +1,7 @@
 FROM apify/actor-node:16
 
-# Install Python
-RUN apt-get update && apt-get install -y python3 python3-pip \
-    && rm -rf /var/lib/apt/lists/*
+# Install Python using Alpine package manager
+RUN apk add --no-cache python3 py3-pip
 
 WORKDIR /usr/src/app
 
