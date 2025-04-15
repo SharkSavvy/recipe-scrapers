@@ -7,7 +7,7 @@ WORKDIR /usr/src/app
 
 # Copy package files and install Node dependencies
 COPY package*.json ./
-RUN npm ci --only=production
+RUN npm install --production
 
 # Install Python package with version pinning
 RUN pip3 install --no-cache-dir recipe-scrapers==13.3.5
