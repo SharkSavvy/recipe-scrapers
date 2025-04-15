@@ -1,48 +1,41 @@
 import json
 import os
-from http.server import HTTPServer, BaseHTTPRequestHandler
 from recipe_scrapers import scrape_me
 
-class RecipeHandler(BaseHTTPRequestHandler):
-    def do_POST(self):
-        # Read request body
-        content_length = int(self.headers['Content-Length'])
-        post_data = self.rfile.read(content_length)
-        data = json.loads(post_data)
-        
-        url = data.get('url')
-        if not url:
-            self.send_error(400, "No URL provided")
-            return
+def write_apify_output(data):
+    output_path = '/apify/output.json'
+    os.makedirs(os.path.dirname(output_path), exist_ok=True)
+    with open(output_path, 'w') as f:
+        json.dump(data, f)
 
-        try:
-            scraper = scrape_me(url)
-            recipe_data = {
-                "title": scraper.title(),
-                "ingredients": scraper.ingredients(),
-                "instructions": scraper.instructions(),
-                "total_time": scraper.total_time(),
-                "yields": scraper.yields(),
-                "url": url
-            }
-            
-            # Send response
-            self.send_response(200)
-            self.send_header('Content-type', 'application/json')
-            self.end_headers()
-            self.wfile.write(json.dumps(recipe_data).encode())
-            
-        except Exception as e:
-            self.send_response(500)
-            self.send_header('Content-type', 'application/json')
-            self.end_headers()
-            self.wfile.write(json.dumps({"error": str(e)}).encode())
+def main():
+    # Read input from Apify
+    try:
+        with open('/apify/input.json', 'r') as f:
+            input_data = json.load(f)
+            url = input_data.get('url')
+    except:
+        write_apify_output({"error": "Failed to read input"})
+        return
 
-def run():
-    port = int(os.environ.get('ACTOR_WEB_SERVER_PORT', 4321))
-    server = HTTPServer(('', port), RecipeHandler)
-    print(f'Starting server on port {port}...')
-    server.serve_forever()
+    if not url:
+        write_apify_output({"error": "No URL provided"})
+        return
 
-if __name__ == '__main__':
-    run()
+    try:
+        scraper = scrape_me(url)
+        recipe = {
+            "title": scraper.title(),
+            "total_time": scraper.total_time(),
+            "yields": scraper.yields(),
+            "ingredients": scraper.ingredients(),
+            "instructions": scraper.instructions(),
+            "image": scraper.image(),
+            "url": url
+        }
+        write_apify_output(recipe)
+    except Exception as e:
+        write_apify_output({"error": str(e)})
+
+if __name__ == "__main__":
+    main()
