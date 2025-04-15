@@ -1,7 +1,7 @@
 FROM apify/actor-node:16
 
 # Install Python using Alpine package manager
-RUN apk add --no-cache python3 py3-pip
+RUN apk add --no-cache python3 py3-pip gcc musl-dev python3-dev
 
 WORKDIR /usr/src/app
 
@@ -9,11 +9,14 @@ WORKDIR /usr/src/app
 COPY package*.json ./
 RUN npm install --production
 
-# Install Python package with version pinning
-RUN pip3 install --no-cache-dir recipe-scrapers==13.3.5
+# Install Python packages properly
+RUN pip3 install --no-cache-dir \
+    beautifulsoup4==4.12.3 \
+    extruct==0.16.0 \
+    isodate==0.6.1 \
+    recipe-scrapers==13.3.5
 
 # Copy source code
 COPY . .
 
-# Run npm start by default
 CMD ["npm", "start"]
