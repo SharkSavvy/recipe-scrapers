@@ -1,17 +1,19 @@
-const Apify = require('apify');
-const { execSync } = require('child_process');
+import { Actor } from 'apify';
+import { execSync } from 'child_process';
 
-Apify.main(async () => {
-    const input = await Apify.getInput();
-    console.log('Received input:', input);
+await Actor.init();
+
+try {
+    // Get input
+    const input = await Actor.getInput();
+    console.log('Input:', input);
 
     if (!input?.url) {
         throw new Error('URL is required in input');
     }
 
-    try {
-        // Run Python script and capture output
-        const pythonScript = `
+    // Run Python script with proper escaping
+    const pythonScript = `
 import json
 from recipe_scrapers import scrape_me
 
@@ -29,17 +31,21 @@ try:
 except Exception as e:
     print(json.dumps({"error": str(e)}))
 `;
-        const result = execSync(`python3 -c '${pythonScript}'`, { encoding: 'utf8' });
-        const recipe = JSON.parse(result);
-        
-        if (recipe.error) {
-            throw new Error(recipe.error);
-        }
 
-        await Apify.pushData(recipe);
-        console.log('Successfully scraped recipe:', recipe.title);
-    } catch (err) {
-        console.error('Scraping failed:', err);
-        throw err;
+    const result = execSync(`python3 -c '${pythonScript}'`, { encoding: 'utf8' });
+    const recipe = JSON.parse(result);
+    
+    if (recipe.error) {
+        throw new Error(recipe.error);
     }
-});
+
+    await Actor.pushData(recipe);
+    console.log('Successfully scraped recipe:', recipe.title);
+
+} catch (err) {
+    console.error('Error:', err);
+    throw err;
+} finally {
+    await Actor.exit();
+}
+
